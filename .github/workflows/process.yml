@@ -56,6 +56,13 @@ jobs:
           # Installing Marker and PyMuPDF for local processing (No API needed)
           pip install marker-pdf pymupdf
           
+      - name: Install llama.cpp Engine
+        run: |
+          git clone https://github.com/ggerganov/llama.cpp
+          cd llama.cpp
+          make -j2 llama-server
+          sudo cp llama-server /usr/local/bin/
+          
       - name: Download PDF artifact
         uses: actions/download-artifact@v4
         with:
@@ -67,7 +74,6 @@ jobs:
           START_PAGE: ${{ matrix.start_page }}
           END_PAGE: ${{ matrix.end_page }}
           WORKER_ID: ${{ matrix.worker_id }}
-          # GEMINI_API_KEY has been completely removed!
         run: python -m src.process_chunk
         
       - name: Upload chunk results
