@@ -1,0 +1,29 @@
+name: Setup Directory Structure
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create folders and files
+        run: |
+          mkdir -p src prompts schemas
+          touch src/drive.py
+          touch src/pdf_processor.py
+          touch src/question_extractor.py
+          touch src/validator.py
+          touch src/main.py
+          touch prompts/question_extraction.txt
+          touch schemas/question.schema.json
+          touch requirements.txt
+          touch .gitignore
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Initialize repo directory structure"
