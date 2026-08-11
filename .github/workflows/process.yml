@@ -63,6 +63,7 @@ jobs:
           START_PAGE: ${{ matrix.start_page }}
           END_PAGE: ${{ matrix.end_page }}
           WORKER_ID: ${{ matrix.worker_id }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python -m src.process_chunk
       - name: Upload chunk results
         uses: actions/upload-artifact@v4
