@@ -60,8 +60,15 @@ jobs:
         run: |
           git clone https://github.com/ggerganov/llama.cpp
           cd llama.cpp
-          make -j2 llama-server
-          sudo cp llama-server /usr/local/bin/
+          # New CMake build process
+          cmake -B build
+          cmake --build build --config Release --target llama-server -j2
+          # Move the compiled binary to the system path
+          if [ -f build/bin/llama-server ]; then
+            sudo cp build/bin/llama-server /usr/local/bin/
+          else
+            sudo cp build/llama-server /usr/local/bin/
+          fi
           
       - name: Download PDF artifact
         uses: actions/download-artifact@v4
