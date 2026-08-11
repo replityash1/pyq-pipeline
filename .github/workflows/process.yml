@@ -38,8 +38,6 @@ jobs:
           path: work/input.pdf
           retention-days: 1
 
-  # --- THE PRIMER JOB ---
-  # Runs ONE time, completely downloads the AI, and caches it securely.
   primer:
     needs: setup
     runs-on: ubuntu-latest
@@ -60,11 +58,20 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install marker-pdf pymupdf
+          
+          # --- THE MISSING STEP: Give the primer the llama.cpp engine ---
+          LATEST_TAG=$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/releases/latest | grep '"tag_name"' | awk -F '"' '{print $4}')
+          curl -L "https://github.com/ggerganov/llama.cpp/releases/download/$LATEST_TAG/llama-$LATEST_TAG-bin-ubuntu-x64.zip" -o llama.zip
+          unzip llama.zip
+          sudo find . -name "llama-server" -exec cp {} /usr/local/bin/ \;
+          sudo chmod +x /usr/local/bin/llama-server
+          # --------------------------------------------------------------
+          
           python -c "import fitz; doc = fitz.open(); doc.new_page().insert_text((50, 50), 'Test'); doc.save('dummy.pdf')"
           marker_single dummy.pdf --output_dir dummy_out --force_ocr
 
   process:
-    needs: [setup, primer] # Waits for the primer to finish building the cache
+    needs: [setup, primer]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -75,7 +82,6 @@ jobs:
         with:
           python-version: "3.11"
           
-      # The 20 workers hit this cache and load the models in 5 seconds!
       - name: Restore HuggingFace Models
         uses: actions/cache@v4
         with:
@@ -106,7 +112,6 @@ jobs:
           START_PAGE: ${{ matrix.start_page }}
           END_PAGE: ${{ matrix.end_page }}
           WORKER_ID: ${{ matrix.worker_id }}
-          # CPU Optimization for free runners
           OMP_NUM_THREADS: "2"
           MKL_NUM_THREADS: "2"
           TORCH_NUM_THREADS: "2"
@@ -139,7 +144,6 @@ jobs:
           path: merged_output
           merge-multiple: true
 
-      # --- NEW: COMBINE 39 FILES INTO 1 ---
       - name: Combine Markdown Files
         run: |
           python -c '
@@ -148,8 +152,6 @@ jobs:
 
           base_dir = Path("merged_output")
           combined_text = []
-
-          # Find and sort all page folders (page_001, page_002, etc.)
           page_dirs = sorted([d for d in base_dir.iterdir() if d.is_dir() and d.name.startswith("page_")])
 
           for pdir in page_dirs:
@@ -157,19 +159,12 @@ jobs:
               if md_files:
                   md_file = md_files[0]
                   content = md_file.read_text(encoding="utf-8")
-
-                  # Fix image links so extracted diagrams still load perfectly
                   content = re.sub(r"\]\(([^/)]+\.(png|jpg|jpeg))\)", rf"]({pdir.name}/\1)", content)
                   content = re.sub(r"src=[\"\']([^/)]+\.(png|jpg|jpeg))[\"\']", rf"src=\"{pdir.name}/\1\"", content)
-
-                  # Add a clean page break and title
                   page_num = int(pdir.name.split("_")[1])
                   combined_text.append(f"## Page {page_num}\n\n" + content)
-
-                  # Delete the individual file so it does not upload to Drive
                   md_file.unlink()
 
-          # Save the master file
           final_file = base_dir / "Complete_Transcription.md"
           final_file.write_text("\n\n---\n\n".join(combined_text), encoding="utf-8")
           print(f"Successfully combined {len(combined_text)} pages into Complete_Transcription.md!")
