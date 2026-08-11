@@ -38,6 +38,7 @@ jobs:
           path: work/input.pdf
           retention-days: 1
 
+  # --- THE PRIMER JOB ---
   primer:
     needs: setup
     runs-on: ubuntu-latest
@@ -59,17 +60,34 @@ jobs:
           python -m pip install --upgrade pip
           pip install marker-pdf pymupdf
           
-          # --- THE MISSING STEP: Give the primer the llama.cpp engine ---
-          LATEST_TAG=$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/releases/latest | grep '"tag_name"' | awk -F '"' '{print $4}')
-          curl -L "https://github.com/ggerganov/llama.cpp/releases/download/$LATEST_TAG/llama-$LATEST_TAG-bin-ubuntu-x64.zip" -o llama.zip
-          unzip llama.zip
-          sudo find . -name "llama-server" -exec cp {} /usr/local/bin/ \;
+      - name: Install llama.cpp Engine
+        if: steps.cache-models.outputs.cache-hit != 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p llama_tmp && cd llama_tmp
+          # Securely download binary using authenticated GitHub CLI
+          if gh release download -R ggerganov/llama.cpp --pattern "*ubuntu*-x64.zip"; then
+            unzip *.zip
+            sudo find . -name "llama-server" -exec cp {} /usr/local/bin/ \;
+          else
+            echo "Binary download failed. Compiling from source (fallback)..."
+            git clone https://github.com/ggerganov/llama.cpp
+            cd llama.cpp
+            cmake -B build
+            cmake --build build --config Release --target llama-server -j2
+            sudo cp build/bin/llama-server /usr/local/bin/
+          fi
           sudo chmod +x /usr/local/bin/llama-server
-          # --------------------------------------------------------------
+          cd ..
           
+      - name: Trigger AI Download
+        if: steps.cache-models.outputs.cache-hit != 'true'
+        run: |
           python -c "import fitz; doc = fitz.open(); doc.new_page().insert_text((50, 50), 'Test'); doc.save('dummy.pdf')"
           marker_single dummy.pdf --output_dir dummy_out --force_ocr
 
+  # --- THE 20 WORKERS ---
   process:
     needs: [setup, primer]
     runs-on: ubuntu-latest
@@ -94,12 +112,23 @@ jobs:
           pip install marker-pdf pymupdf
           
       - name: Install llama.cpp Engine
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          LATEST_TAG=$(curl -s https://api.github.com/repos/ggerganov/llama.cpp/releases/latest | grep '"tag_name"' | awk -F '"' '{print $4}')
-          curl -L "https://github.com/ggerganov/llama.cpp/releases/download/$LATEST_TAG/llama-$LATEST_TAG-bin-ubuntu-x64.zip" -o llama.zip
-          unzip llama.zip
-          sudo find . -name "llama-server" -exec cp {} /usr/local/bin/ \;
+          mkdir -p llama_tmp && cd llama_tmp
+          if gh release download -R ggerganov/llama.cpp --pattern "*ubuntu*-x64.zip"; then
+            unzip *.zip
+            sudo find . -name "llama-server" -exec cp {} /usr/local/bin/ \;
+          else
+            echo "Binary download failed. Compiling from source (fallback)..."
+            git clone https://github.com/ggerganov/llama.cpp
+            cd llama.cpp
+            cmake -B build
+            cmake --build build --config Release --target llama-server -j2
+            sudo cp build/bin/llama-server /usr/local/bin/
+          fi
           sudo chmod +x /usr/local/bin/llama-server
+          cd ..
           
       - name: Download PDF artifact
         uses: actions/download-artifact@v4
