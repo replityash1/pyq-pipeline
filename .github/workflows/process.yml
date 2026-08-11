@@ -58,6 +58,27 @@ jobs:
         with:
           name: source-pdf
           path: work
+          
+      # --- NEW STEP TO FIND WORKING MODELS ---
+      - name: List Available Gemini Models
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python -c '
+          import os
+          from google import genai
+          
+          client = genai.Client(api_key=os.environ["GEMINI_API_KEY"])
+          
+          print("=========================================")
+          print("AVAILABLE MODELS FOR YOUR API KEY:")
+          print("=========================================")
+          for m in client.models.list():
+              print(f" - {m.name}")
+          print("=========================================")
+          '
+      # ---------------------------------------
+
       - name: Process page range
         env:
           START_PAGE: ${{ matrix.start_page }}
