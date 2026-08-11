@@ -9,6 +9,7 @@ def process_pdf(pdf_path: str, output_dir: str) -> None:
     pipeline = create_pipeline(
         pipeline="PP-StructureV3",
         device="cpu",
+        enable_mkldnn=False,
     )
 
     results = pipeline.predict(
