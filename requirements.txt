@@ -2,9 +2,6 @@ google-api-python-client
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
-paddleocr
-paddlex[ocr]
-paddlepaddle==3.2.2
 pymupdf
 pillow
-opencv-python-headless
+google-genai
