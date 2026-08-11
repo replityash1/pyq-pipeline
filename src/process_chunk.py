@@ -31,40 +31,44 @@ def process_pdf(pdf_path: str, output_dir: str, start_page: int, end_page: int) 
         marker_out_dir = page_dir / "marker_out"
         marker_out_dir.mkdir(parents=True, exist_ok=True)
         
-        # 4. Execute Marker OCR (Forces OCR on scanned pages, supports English & Hindi)
+        # 4. Execute Marker OCR (Language flag removed - v2.0 auto-detects English/Hindi)
         cmd = [
             "marker_single",
             str(temp_pdf),
             "--output_dir", str(marker_out_dir),
-            "--force_ocr",
-            "--languages", "eng,hin"
+            "--force_ocr"
         ]
         
         try:
             subprocess.run(cmd, check=True)
+            
+            # 5. Marker places results in a subfolder named after the input file
+            pdf_stem = temp_pdf.stem
+            marker_result_dir = marker_out_dir / pdf_stem
+            
+            # 6. Move the markdown output to match your original structure
+            md_file = marker_result_dir / f"{pdf_stem}.md"
+            if md_file.exists():
+                final_md_path = page_dir / f"page_{global_page_num:03d}.md"
+                shutil.copy(md_file, final_md_path)
+                
+            # 7. Move any extracted graphs, equations, or diagrams
+            for img_file in marker_result_dir.glob("*.png"):
+                shutil.copy(img_file, page_dir / img_file.name)
+            for img_file in marker_result_dir.glob("*.jpg"):
+                shutil.copy(img_file, page_dir / img_file.name)
+                
         except subprocess.CalledProcessError as e:
             print(f"Error processing page {global_page_num}: {e}")
-            continue
             
-        # 5. Marker places results in a subfolder named after the input file
-        pdf_stem = temp_pdf.stem
-        marker_result_dir = marker_out_dir / pdf_stem
-        
-        # 6. Move the markdown output to match your previous Gemini structure
-        md_file = marker_result_dir / f"{pdf_stem}.md"
-        if md_file.exists():
-            final_md_path = page_dir / f"page_{global_page_num:03d}.md"
-            shutil.copy(md_file, final_md_path)
-            
-        # 7. Move any extracted graphs, equations, or diagrams
-        for img_file in marker_result_dir.glob("*.png"):
-            shutil.copy(img_file, page_dir / img_file.name)
-        for img_file in marker_result_dir.glob("*.jpg"):
-            shutil.copy(img_file, page_dir / img_file.name)
-            
-        # 8. Clean up temporary files to save runner disk space
-        temp_pdf.unlink()
-        shutil.rmtree(marker_out_dir)
+        finally:
+            # 8. THE FIX: Clean up ALL temporary files unconditionally
+            # This guarantees you never get a zip full of raw PDFs again!
+            if temp_pdf.exists():
+                temp_pdf.unlink()
+            if marker_out_dir.exists():
+                shutil.rmtree(marker_out_dir)
+                
         print(f"Page {global_page_num} completed successfully.")
 
 def main():
