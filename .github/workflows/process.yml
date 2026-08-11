@@ -1,48 +1,99 @@
-name: PYQ OCR Performance Test
+name: Process PYQ PDF (Parallel)
 
 on:
   workflow_dispatch:
     inputs:
-      workers:
-        description: "Number of parallel benchmark workers"
-        required: false
+      num_workers:
+        description: "Number of parallel workers"
         default: "10"
-        type: string
 
 jobs:
-  benchmark:
+  setup:
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      max-parallel: 10
-      matrix:
-        worker: [1,2,3,4,5,6,7,8,9,10]
-
+    outputs:
+      matrix: ${{ steps.chunks.outputs.matrix }}
+      pdf_name: ${{ steps.chunks.outputs.pdf_name }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
-
-      - name: Install dependencies
+      - name: Install lightweight dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Benchmark one PDF
+          pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2 pymupdf
+      - name: Determine page chunks
+        id: chunks
         env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          NUM_WORKERS: ${{ github.event.inputs.num_workers }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           DRIVE_INPUT_FOLDER_ID: ${{ secrets.DRIVE_INPUT_FOLDER_ID }}
-          DRIVE_OUTPUT_FOLDER_ID: ${{ secrets.DRIVE_OUTPUT_FOLDER_ID }}
-          PYQ_WORKER_INDEX: ${{ matrix.worker }}
-          PYQ_WORKER_COUNT: "10"
+        run: python -m src.setup_chunks
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-pdf
+          path: work/input.pdf
+          retention-days: 1
+
+  process:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install full dependencies
         run: |
-          echo "Starting benchmark worker $PYQ_WORKER_INDEX/$PYQ_WORKER_COUNT"
-          python -m src.perf_worker
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      - name: Download PDF artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: source-pdf
+          path: work
+      - name: Process page range
+        env:
+          START_PAGE: ${{ matrix.start_page }}
+          END_PAGE: ${{ matrix.end_page }}
+          WORKER_ID: ${{ matrix.worker_id }}
+        run: python -m src.process_chunk
+      - name: Upload chunk results
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunk-${{ matrix.worker_id }}
+          path: work/output
+          retention-days: 1
+
+  merge:
+    needs: [setup, process]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lightweight dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
+      - name: Download all chunk artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: chunk-*
+          path: merged_output
+          merge-multiple: true
+      - name: Merge and upload to Drive
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          DRIVE_OUTPUT_FOLDER_ID: ${{ secrets.DRIVE_OUTPUT_FOLDER_ID }}
+          PDF_NAME: ${{ needs.setup.outputs.pdf_name }}
+        run: python -m src.merge_and_upload
