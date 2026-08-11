@@ -3,6 +3,9 @@ name: Setup Directory Structure
 on:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -12,7 +15,8 @@ jobs:
 
       - name: Create folders and files
         run: |
-          mkdir -p src prompts schemas
+          mkdir -p .github/workflows src prompts schemas
+          touch .github/workflows/process.yml
           touch src/drive.py
           touch src/pdf_processor.py
           touch src/question_extractor.py
