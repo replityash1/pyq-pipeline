@@ -1,11 +1,23 @@
-name: Process PYQ PDFs
+name: PYQ OCR Performance Test
 
 on:
   workflow_dispatch:
+    inputs:
+      workers:
+        description: "Number of parallel benchmark workers"
+        required: false
+        default: "10"
+        type: string
 
 jobs:
-  process:
+  benchmark:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        worker: [1,2,3,4,5,6,7,8,9,10]
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -14,13 +26,14 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: "pip"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Process PDFs
+      - name: Benchmark one PDF
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
@@ -28,5 +41,8 @@ jobs:
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
           DRIVE_INPUT_FOLDER_ID: ${{ secrets.DRIVE_INPUT_FOLDER_ID }}
           DRIVE_OUTPUT_FOLDER_ID: ${{ secrets.DRIVE_OUTPUT_FOLDER_ID }}
+          PYQ_WORKER_INDEX: ${{ matrix.worker }}
+          PYQ_WORKER_COUNT: "10"
         run: |
-          python -m src.main
+          echo "Starting benchmark worker $PYQ_WORKER_INDEX/$PYQ_WORKER_COUNT"
+          python -m src.perf_worker
