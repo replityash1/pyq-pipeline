@@ -4,6 +4,7 @@ google-auth-oauthlib
 google-auth-httplib2
 paddleocr
 paddlex[ocr]
+paddlepaddle
 pymupdf
 pillow
 opencv-python-headless
