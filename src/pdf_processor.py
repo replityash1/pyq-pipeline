@@ -52,7 +52,7 @@ def transcribe_page(client: genai.Client, image_path: Path, max_retries: int = 4
     for attempt in range(max_retries):
         try:
             response = client.models.generate_content(
-                model="gemini-2.0-flash",  # Updated to a stable, working model string
+                model="gemini-1.5-flash",  # Updated to a stable, working model string
                 contents=[TRANSCRIPTION_PROMPT, image_part],
             )
             return response.text
