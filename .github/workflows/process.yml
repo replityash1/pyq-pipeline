@@ -5,7 +5,7 @@ on:
     inputs:
       num_workers:
         description: "Number of parallel workers"
-        default: "20"
+        default: "10"
 
 jobs:
   setup:
@@ -38,58 +38,8 @@ jobs:
           path: work/input.pdf
           retention-days: 1
 
-  # --- THE PRIMER JOB ---
-  primer:
-    needs: setup
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          
-      - name: Cache HuggingFace Models
-        id: cache-models
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/huggingface
-          key: hf-marker-models-v1
-          
-      - name: Download and Cache AI Models
-        if: steps.cache-models.outputs.cache-hit != 'true'
-        run: |
-          python -m pip install --upgrade pip
-          pip install marker-pdf pymupdf
-          
-      - name: Install llama.cpp Engine
-        if: steps.cache-models.outputs.cache-hit != 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdir -p llama_tmp && cd llama_tmp
-          # Securely download binary using authenticated GitHub CLI
-          if gh release download -R ggerganov/llama.cpp --pattern "*ubuntu*-x64.zip"; then
-            unzip *.zip
-            sudo find . -name "llama-server" -exec cp {} /usr/local/bin/ \;
-          else
-            echo "Binary download failed. Compiling from source (fallback)..."
-            git clone https://github.com/ggerganov/llama.cpp
-            cd llama.cpp
-            cmake -B build
-            cmake --build build --config Release --target llama-server -j2
-            sudo cp build/bin/llama-server /usr/local/bin/
-          fi
-          sudo chmod +x /usr/local/bin/llama-server
-          cd ..
-          
-      - name: Trigger AI Download
-        if: steps.cache-models.outputs.cache-hit != 'true'
-        run: |
-          python -c "import fitz; doc = fitz.open(); doc.new_page().insert_text((50, 50), 'Test'); doc.save('dummy.pdf')"
-          marker_single dummy.pdf --output_dir dummy_out --force_ocr
-
-  # --- THE 20 WORKERS ---
   process:
-    needs: [setup, primer]
+    needs: setup
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -99,36 +49,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          
-      - name: Restore HuggingFace Models
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/huggingface
-          key: hf-marker-models-v1
-          
+      
       - name: Install Local AI Dependencies
         run: |
           python -m pip install --upgrade pip
+          # Installing Marker and PyMuPDF for local processing (No API needed)
           pip install marker-pdf pymupdf
           
       - name: Install llama.cpp Engine
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p llama_tmp && cd llama_tmp
-          if gh release download -R ggerganov/llama.cpp --pattern "*ubuntu*-x64.zip"; then
-            unzip *.zip
-            sudo find . -name "llama-server" -exec cp {} /usr/local/bin/ \;
-          else
-            echo "Binary download failed. Compiling from source (fallback)..."
-            git clone https://github.com/ggerganov/llama.cpp
-            cd llama.cpp
-            cmake -B build
-            cmake --build build --config Release --target llama-server -j2
+          git clone https://github.com/ggerganov/llama.cpp
+          cd llama.cpp
+          # New CMake build process
+          cmake -B build
+          cmake --build build --config Release --target llama-server -j2
+          # Move the compiled binary to the system path
+          if [ -f build/bin/llama-server ]; then
             sudo cp build/bin/llama-server /usr/local/bin/
+          else
+            sudo cp build/llama-server /usr/local/bin/
           fi
-          sudo chmod +x /usr/local/bin/llama-server
-          cd ..
           
       - name: Download PDF artifact
         uses: actions/download-artifact@v4
@@ -141,9 +81,6 @@ jobs:
           START_PAGE: ${{ matrix.start_page }}
           END_PAGE: ${{ matrix.end_page }}
           WORKER_ID: ${{ matrix.worker_id }}
-          OMP_NUM_THREADS: "2"
-          MKL_NUM_THREADS: "2"
-          TORCH_NUM_THREADS: "2"
         run: python -m src.process_chunk
         
       - name: Upload chunk results
@@ -165,40 +102,12 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
-          
       - name: Download all chunk artifacts
         uses: actions/download-artifact@v4
         with:
           pattern: chunk-*
           path: merged_output
           merge-multiple: true
-
-      - name: Combine Markdown Files
-        run: |
-          python -c '
-          import os, re
-          from pathlib import Path
-
-          base_dir = Path("merged_output")
-          combined_text = []
-          page_dirs = sorted([d for d in base_dir.iterdir() if d.is_dir() and d.name.startswith("page_")])
-
-          for pdir in page_dirs:
-              md_files = list(pdir.glob("*.md"))
-              if md_files:
-                  md_file = md_files[0]
-                  content = md_file.read_text(encoding="utf-8")
-                  content = re.sub(r"\]\(([^/)]+\.(png|jpg|jpeg))\)", rf"]({pdir.name}/\1)", content)
-                  content = re.sub(r"src=[\"\']([^/)]+\.(png|jpg|jpeg))[\"\']", rf"src=\"{pdir.name}/\1\"", content)
-                  page_num = int(pdir.name.split("_")[1])
-                  combined_text.append(f"## Page {page_num}\n\n" + content)
-                  md_file.unlink()
-
-          final_file = base_dir / "Complete_Transcription.md"
-          final_file.write_text("\n\n---\n\n".join(combined_text), encoding="utf-8")
-          print(f"Successfully combined {len(combined_text)} pages into Complete_Transcription.md!")
-          '
-
       - name: Merge and upload to Drive
         env:
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
