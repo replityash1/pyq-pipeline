@@ -18,6 +18,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+          cache: pip
       - name: Install lightweight dependencies
         run: |
           python -m pip install --upgrade pip
@@ -49,27 +50,27 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      
+          cache: pip
+
       - name: Install Local AI Dependencies
         run: |
           python -m pip install --upgrade pip
           # Installing Marker and PyMuPDF for local processing (No API needed)
           pip install marker-pdf pymupdf
-          
-      - name: Install llama.cpp Engine
-        run: |
-          git clone https://github.com/ggerganov/llama.cpp
-          cd llama.cpp
-          # New CMake build process
-          cmake -B build
-          cmake --build build --config Release --target llama-server -j2
-          # Move the compiled binary to the system path
-          if [ -f build/bin/llama-server ]; then
-            sudo cp build/bin/llama-server /usr/local/bin/
-          else
-            sudo cp build/llama-server /usr/local/bin/
-          fi
-          
+
+      # Note: on the very first run this doesn't help (10 workers start in
+      # parallel and race to populate it), but every run after that, all 10
+      # workers restore from cache instead of re-downloading multi-GB weights.
+      - name: Cache Marker model weights
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/huggingface
+            ~/.cache/datalab
+          key: marker-models-${{ runner.os }}
+          restore-keys: |
+            marker-models-
+
       - name: Download PDF artifact
         uses: actions/download-artifact@v4
         with:
