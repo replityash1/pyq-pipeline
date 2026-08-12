@@ -1,31 +1,9 @@
-# ─── Replace your existing "Run python -m pip install" step with this ───────
-#
-# Key changes vs. your original:
-#   1. marker-pdf pinned to 1.6.2  →  no surya-ocr llamacpp backend, no
-#      llama-server binary needed at all (remove that entire gh release step)
-#   2. pymupdf installed explicitly (marker 1.x depends on it but naming
-#      changed; explicit pin avoids a surprise upgrade)
-#   3. The "Install llama-server" block is DELETED — not needed with 1.x
-
-      - name: Install Python dependencies
+- name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          # marker-pdf 1.x uses PyTorch directly — no llamacpp / surya-ocr
-          # server process, works out of the box on CPU GitHub Actions runners.
           pip install \
             "marker-pdf==1.6.2" \
             "pymupdf>=1.24,<2"
-
-      # ── DELETE the block below (no longer needed) ──────────────────────────
-      # - name: Install llama-server
-      #   env:
-      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   run: |
-      #     mkdir -p llama-bin
-      #     gh release download --repo ggml-org/llama.cpp \
-      #       --pattern '*bin-ubuntu-x64*' --dir llama-bin --clobber
-      #     ...
-      # ───────────────────────────────────────────────────────────────────────
 
       - name: Cache Marker / HuggingFace models
         uses: actions/cache@v4
@@ -33,13 +11,9 @@
           path: |
             ~/.cache/huggingface
             ~/.cache/datalab
-          # 1.x downloads different (smaller) models; use a separate cache key
-          # so it doesn't collide with any leftover 2.x cache.
           key: marker-1x-models-${{ runner.os }}
           restore-keys: marker-1x-models-
 
-      # The process step itself — no env changes needed, torch device is set
-      # inside process_chunk.py via os.environ.setdefault()
       - name: Process chunk
         run: python -m src.process_chunk
         env:
