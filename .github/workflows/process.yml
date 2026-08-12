@@ -1,23 +1,58 @@
-name: Process PDF
+name: Process PYQ PDF (Parallel)
 
 on:
   workflow_dispatch:
+    inputs:
+      num_workers:
+        description: "Number of parallel workers"
+        default: "10"
 
 jobs:
-  process:
+  setup:
     runs-on: ubuntu-latest
-
-    strategy:
-      matrix:
-        start_page: [1]
-        end_page: [100]
-        worker_id: [0]
-
+    outputs:
+      matrix: ${{ steps.chunks.outputs.matrix }}
+      pdf_name: ${{ steps.chunks.outputs.pdf_name }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install lightweight dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2 pymupdf
+      - name: Determine page chunks
+        id: chunks
+        env:
+          NUM_WORKERS: ${{ github.event.inputs.num_workers }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          DRIVE_INPUT_FOLDER_ID: ${{ secrets.DRIVE_INPUT_FOLDER_ID }}
+        run: python -m src.setup_chunks
+      - name: Upload PDF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-pdf
+          path: work/input.pdf
+          retention-days: 1
 
-      - name: Install Python dependencies
+  process:
+    needs: setup
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.setup.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Local AI Dependencies
         run: |
           python -m pip install --upgrade pip
           # marker-pdf 1.x uses PyTorch directly — no llamacpp / surya-ocr
@@ -26,17 +61,9 @@ jobs:
             "marker-pdf==1.6.2" \
             "pymupdf>=1.24,<2"
 
-      # ── DELETE the old llama-server block ──────────────────────────
-      # - name: Install llama-server
-      #   env:
-      #     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   run: |
-      #     mkdir -p llama-bin
-      #     gh release download --repo ggml-org/llama.cpp \
-      #       --pattern '*bin-ubuntu-x64*' --dir llama-bin --clobber
-      #     ...
-      # ────────────────────────────────────────────────────────────────
-
+      # Note: on the very first run this doesn't help (10 workers start in
+      # parallel and race to populate it), but every run after that, all 10
+      # workers restore from cache instead of re-downloading multi-GB weights.
       - name: Cache Marker / HuggingFace models
         uses: actions/cache@v4
         with:
@@ -46,14 +73,51 @@ jobs:
           # 1.x downloads different (smaller) models; use a separate cache key
           # so it doesn't collide with any leftover 2.x cache.
           key: marker-1x-models-${{ runner.os }}
-          restore-keys: |
-            marker-1x-models-
+          restore-keys: marker-1x-models-
 
-      # The process step itself — no env changes needed,
-      # torch device is set inside process_chunk.py via os.environ.setdefault()
-      - name: Process chunk
-        run: python -m src.process_chunk
+      - name: Download PDF artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: source-pdf
+          path: work
+
+      - name: Process page range locally
         env:
           START_PAGE: ${{ matrix.start_page }}
           END_PAGE: ${{ matrix.end_page }}
           WORKER_ID: ${{ matrix.worker_id }}
+        run: python -m src.process_chunk
+
+      - name: Upload chunk results
+        uses: actions/upload-artifact@v4
+        with:
+          name: chunk-${{ matrix.worker_id }}
+          path: work/output
+          retention-days: 1
+
+  merge:
+    needs: [setup, process]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install lightweight dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install google-api-python-client google-auth google-auth-oauthlib google-auth-httplib2
+      - name: Download all chunk artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: chunk-*
+          path: merged_output
+          merge-multiple: true
+      - name: Merge and upload to Drive
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          DRIVE_OUTPUT_FOLDER_ID: ${{ secrets.DRIVE_OUTPUT_FOLDER_ID }}
+          PDF_NAME: ${{ needs.setup.outputs.pdf_name }}
+        run: python -m src.merge_and_upload
