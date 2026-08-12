@@ -56,7 +56,33 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # Installing Marker and PyMuPDF for local processing (No API needed)
-          pip install marker-pdf pymupdf
+          pip install marker-pdf==2.0.0 pymupdf
+
+      # marker-pdf 2.x (Surya v2) auto-spawns llama-server on CPU for its
+      # OCR/layout/table VLM backend — this is a real runtime dependency,
+      # not optional. We install a prebuilt release binary instead of
+      # compiling from source, since building with cmake in all 10 parallel
+      # workers was the actual waste, not the dependency itself.
+      - name: Install llama.cpp (prebuilt binary)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p llama-bin
+          gh release download --repo ggml-org/llama.cpp \
+            --pattern '*bin-ubuntu-x64*' --dir llama-bin --clobber
+          mkdir -p llama-bin/extracted
+          archive=$(ls llama-bin/*.tar.gz llama-bin/*.zip 2>/dev/null | head -n1)
+          case "$archive" in
+            *.tar.gz) tar -xzf "$archive" -C llama-bin/extracted ;;
+            *.zip)    unzip -oq "$archive" -d llama-bin/extracted ;;
+          esac
+          bin_path=$(find llama-bin/extracted -name 'llama-server' -type f | head -n1)
+          sudo cp "$bin_path" /usr/local/bin/llama-server
+          sudo chmod +x /usr/local/bin/llama-server
+          # llama-server release builds need their bundled shared libs on the loader path
+          sudo cp "$(dirname "$bin_path")"/*.so* /usr/local/lib/ 2>/dev/null || true
+          sudo ldconfig
+          llama-server --version
 
       # Note: on the very first run this doesn't help (10 workers start in
       # parallel and race to populate it), but every run after that, all 10
